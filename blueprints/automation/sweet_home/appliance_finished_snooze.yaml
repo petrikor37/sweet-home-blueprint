@@ -1,0 +1,184 @@
+blueprint:
+  name: Sweet Home - Electrodoméstico terminado con recordatorio
+  description: >
+    Detecta el inicio y el final de un electrodoméstico mediante un sensor de
+    potencia y envía una notificación interactiva. Permite recordar en 15
+    minutos, 1 hora o 2 horas, o finalizar los avisos al confirmar que la ropa
+    ya ha sido retirada.
+  domain: automation
+  source_url: https://community.home-assistant.io/t/appliance-notifications-actions-washing-machine-clothes-dryer-dish-washer-etc/650166
+  input:
+    power_sensor:
+      name: Sensor de potencia
+      description: Sensor que mide el consumo instantáneo en vatios.
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+
+    start_threshold:
+      name: Umbral de inicio
+      description: El consumo debe superar este valor para considerar iniciado el ciclo.
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 5000
+          step: 1
+          unit_of_measurement: W
+
+    start_for:
+      name: Tiempo mínimo de inicio
+      default:
+        minutes: 1
+      selector:
+        duration: {}
+
+    finish_threshold:
+      name: Umbral de finalización
+      description: El consumo debe permanecer por debajo de este valor para considerar terminado el ciclo.
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 5000
+          step: 1
+          unit_of_measurement: W
+
+    finish_for:
+      name: Tiempo por debajo del umbral
+      default:
+        minutes: 5
+      selector:
+        duration: {}
+
+    notify_service:
+      name: Servicio de notificación
+      description: Ejemplo: notify.mobile_app_iphone_de_jose.
+      selector:
+        text: {}
+
+    notification_title:
+      name: Título de la notificación
+      default: Secadora terminada
+      selector:
+        text: {}
+
+    notification_message:
+      name: Texto de la notificación
+      default: La secadora ha terminado.
+      selector:
+        text: {}
+
+    action_prefix:
+      name: Prefijo único de acciones
+      description: Usa SECADORA para la secadora y LAVADORA para la lavadora.
+      default: SECADORA
+      selector:
+        text: {}
+
+    notification_tag:
+      name: Etiqueta de notificación
+      default: secadora-finalizada
+      selector:
+        text: {}
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  notify_service: !input notify_service
+  action_prefix: !input action_prefix
+  notification_tag: !input notification_tag
+
+triggers:
+  - trigger: numeric_state
+    entity_id: !input power_sensor
+    above: !input start_threshold
+    for: !input start_for
+
+conditions: []
+
+actions:
+  - alias: Esperar a que termine el ciclo
+    wait_for_trigger:
+      - trigger: numeric_state
+        entity_id: !input power_sensor
+        below: !input finish_threshold
+        for: !input finish_for
+
+  - alias: Repetir avisos hasta confirmar
+    repeat:
+      while:
+        - condition: template
+          value_template: "{{ true }}"
+      sequence:
+        - alias: Enviar notificación interactiva
+          action: "{{ notify_service }}"
+          data:
+            title: !input notification_title
+            message: !input notification_message
+            data:
+              tag: "{{ notification_tag }}"
+              actions:
+                - action: "{{ action_prefix }}_15"
+                  title: Avísame (15 min)
+                - action: "{{ action_prefix }}_60"
+                  title: Avísame (1 hora)
+                - action: "{{ action_prefix }}_120"
+                  title: Avísame (2 horas)
+                - action: "{{ action_prefix }}_DONE"
+                  title: Ya la he sacado
+
+        - alias: Esperar la elección del usuario
+          wait_for_trigger:
+            - trigger: event
+              event_type: mobile_app_notification_action
+              event_data:
+                action: "{{ action_prefix }}_15"
+            - trigger: event
+              event_type: mobile_app_notification_action
+              event_data:
+                action: "{{ action_prefix }}_60"
+            - trigger: event
+              event_type: mobile_app_notification_action
+              event_data:
+                action: "{{ action_prefix }}_120"
+            - trigger: event
+              event_type: mobile_app_notification_action
+              event_data:
+                action: "{{ action_prefix }}_DONE"
+
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: >-
+                    {{ wait.trigger.event.data.action == action_prefix ~ '_DONE' }}
+              sequence:
+                - alias: Borrar la notificación al confirmar
+                  action: "{{ notify_service }}"
+                  data:
+                    message: clear_notification
+                    data:
+                      tag: "{{ notification_tag }}"
+                - stop: Ropa retirada
+
+            - conditions:
+                - condition: template
+                  value_template: >-
+                    {{ wait.trigger.event.data.action == action_prefix ~ '_60' }}
+              sequence:
+                - delay:
+                    hours: 1
+
+            - conditions:
+                - condition: template
+                  value_template: >-
+                    {{ wait.trigger.event.data.action == action_prefix ~ '_120' }}
+              sequence:
+                - delay:
+                    hours: 2
+
+          default:
+            - delay:
+                minutes: 15
