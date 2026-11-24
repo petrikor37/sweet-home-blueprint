@@ -54,7 +54,7 @@ blueprint:
 
     notify_service:
       name: Servicio de notificación
-      description: Ejemplo: notify.mobile_app_iphone_de_jose.
+      description: "Ejemplo: notify.mobile_app_iphone_de_jose."
       selector:
         text: {}
 
